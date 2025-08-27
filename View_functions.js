@@ -1,0 +1,736 @@
+import * as THREE from "three";
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {TWEEN} from 'https://unpkg.com/three@0.139.0/examples/jsm/libs/tween.module.min.js';
+import { lagerMarker, leaveproberaumMarker, proberaumlagerMarker, lagerproberaumMarker, toMischraumMarker, leaveMischraum, leavelagerMarker, toMarshallMarker, leaveMarshall, activeMarkers, markers} from "./Marker.js";
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { zeigeQuiz, speicherePunkte, quizFragen, quizPunkte } from "./Marker.js";
+import { getUserQuizFragen, getNextTwoQuestions, getNextQuestions, getVisibleIntersects } from "./main.js";
+import { isMobileDevice, dirLight1, scene, camera, renderer, composer, LOW_END, TARGET_FPS, QUALITY } from './Allgemeines.js';
+
+function applyToAllMeshes(callback) {
+  scene.traverse((obj) => {
+    if (!obj || !obj.isMesh) return;
+
+    // Material kann ein Array sein (GLTF), also vereinheitlichen:
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+    callback(obj, materials);
+  });
+}
+
+export function animateCamera(targetPosition, targetLookAt, duration = 1000) {
+  return new Promise((resolve) => {
+    const start = performance.now();
+
+    const startPos = camera.position.clone();
+
+    // aktuellen LookAt rekonstruieren (aus Blickrichtung + Position)
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    const startLook = camera.position.clone().add(dir);
+
+    const endPos = targetPosition.clone();
+    const endLook = targetLookAt.clone();
+
+    // sanftes Easing
+    const easeInOut = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t);
+
+    function step(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const k = easeInOut(t);
+
+      // Interpolation
+      camera.position.lerpVectors(startPos, endPos, k);
+      const look = new THREE.Vector3().lerpVectors(startLook, endLook, k);
+      camera.lookAt(look);
+
+      // Controls „mitnehmen“
+      controls.target.copy(look);
+      controls.update();
+
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        // final exakt setzen
+        camera.position.copy(endPos);
+        camera.lookAt(endLook);
+        controls.target.copy(endLook);
+        controls.update();
+        resolve();
+      }
+    }
+
+    requestAnimationFrame(step);
+  });
+}
+
+//Orbit Controls
+export let controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;  // Smooth Camera Movements
+controls.dampingFactor = 0.25;
+controls.screenSpacePanning = false;
+controls.maxPolarAngle = Math.PI / 2; // Kamera darf nicht nach unten gehen
+
+// Bestimmen Sie das Event basierend auf dem Gerät
+const inputEvent = isMobileDevice() ? 'touchstart' : 'click';
+
+leaveMischraum.visible = false;
+leaveMarshall.visible = false;
+
+let isDragging = false;
+let mouseDownPos = new THREE.Vector2();
+
+window.addEventListener('mousedown', (e) => {
+    isDragging = false;
+    mouseDownPos.set(e.clientX, e.clientY);
+});
+
+window.addEventListener('mousemove', (e) => {
+    const dx = e.clientX - mouseDownPos.x;
+    const dy = e.clientY - mouseDownPos.y;
+    if (Math.sqrt(dx * dx + dy * dy) > 5) {
+        isDragging = true;
+    }
+});
+
+window.addEventListener(inputEvent, function (event) {
+    if (isDragging) return;
+
+    const mouse = new THREE.Vector2();
+
+    if (inputEvent === 'touchstart') {
+        const touch = event.touches[0];
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+    } else {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    }
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+
+    const visibleMarkers = activeMarkers.filter(m => m.visible === true);
+    const intersects = getVisibleIntersects(raycaster, visibleMarkers);
+    if (intersects.length > 0) {
+        const clickedMarker = intersects[0].object;
+
+        //  Sichtbarkeit prüfen
+        if (clickedMarker.visible) {
+            handleMarkerClick(clickedMarker);
+        }
+    }
+});
+
+function handleMarkerClick(marker) {
+    if (!marker.visible) return;
+    if (marker === lagerMarker) {
+        goToLager();
+    } else if (marker === proberaumlagerMarker && currentRoom == "Gesteinsraum") {
+        fromProberaumtoLager();
+    } else if (marker === lagerproberaumMarker && currentRoom == "Lager") {
+        fromLagertoProberaum();
+    } else if (marker === leaveproberaumMarker) {
+        leaveView();
+    } else if (marker === leavelagerMarker) {
+        leaveView();
+    } else if (marker === leaveMischraum) {
+        leaveView();
+    } else if (marker === toMarshallMarker && currentRoom == "Mischraum") {
+        toMarshall();
+    } else if (marker === leaveMarshall) {
+        leaveView();
+    } 
+}
+
+// WebXR-Button hinzufügen
+document.body.appendChild(VRButton.createButton(renderer));
+
+// AR View für non IOS
+export function startARView() {
+    renderer.xr.enabled = true;
+    scene.background = null;
+
+    let arLight = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    arLight.position.set(0.5, 1, 0.25);
+    scene.add(arLight);
+
+    camera.position.set(20, 20, 5); // Durchschnittliche Augenhöhe
+    camera.lookAt(0, 0, -1);
+
+    renderer.setAnimationLoop(() => {
+        renderer.render(scene, camera);
+    });
+
+}
+
+// // AR View für IOS
+// export function startARMode() {
+//     console.log("AR-Modus gestartet. Wechsel zu AR.js-Ansicht.");
+
+//     // Wechsel zur AR.js-Szene
+//     document.body.innerHTML = `
+//     <a-scene embedded arjs>
+//         <a-box position="20 20 5" material="color: red;"></a-box>
+//         <a-marker-camera preset="hiro"></a-marker-camera>
+//     </a-scene>`;
+// }
+
+
+function flyTo(targetPos, lookAtPos, duration = 1200) {
+  const start = performance.now();
+  const fromPos = camera.position.clone();
+  const fromLook = new THREE.Vector3();
+  camera.getWorldDirection(fromLook);
+  const lookStart = camera.position.clone().add(fromLook);
+  const lookEnd = lookAtPos.clone();
+
+  function easeInOutQuad(t){ return t<0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+  function step(now){
+    const t = Math.min(1, (now - start) / duration);
+    const k = easeInOutQuad(t);
+
+    camera.position.lerpVectors(fromPos, targetPos, k);
+
+    const look = new THREE.Vector3().lerpVectors(lookStart, lookEnd, k);
+    camera.lookAt(look);
+
+    controls.update();
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// Kamera-Positionen für Lagerraum und Proberaum
+let lagerViewpoint = new THREE.Vector3(-12.5, 1.5, 4);
+let proberaumViewpoint = new THREE.Vector3(5, 1.5, -15);
+let MischraumViewpoint = new THREE.Vector3(-8, 1.5, 7);
+let MarshallViewpoint = new THREE.Vector3(-8, 1.5, 3);
+export let currentRoom = ""
+export function goToLager() {
+    currentRoom = "Lager";
+    const targetPosition = new THREE.Vector3(lagerViewpoint.x, lagerViewpoint.y, lagerViewpoint.z);
+    const targetLookAt = new THREE.Vector3(lagerViewpoint.x, lagerViewpoint.y, lagerViewpoint.z + 0.1);
+    try {
+        flyTo(targetPosition, targetLookAt, 1200);
+        console.log('[goToLager] moving camera to Lager…');
+    } catch (e) {
+        console.error('[goToLager] failed:', e);
+    }
+    // Setze den Drehpunkt (target) auf die gewünschte Position
+    controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+    controls.update();
+
+    // Erlaube nur Rotation, kein Zoom
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.enableRotate = true;
+    // if (isMobileDevice()) {
+    //     exitARView();
+    // }
+    // Blende den `uiContainer`-Schieberegler aus
+    document.getElementById('uiContainer').style.display = 'none';
+    leaveMischraum.visible = false;
+    leaveMarshall.visible = false;
+
+    const event = new CustomEvent('roomChanged', { detail: 'Lager' });
+    window.dispatchEvent(event);
+}
+
+
+// Legacy: auch global verfügbar machen (wichtig, wenn irgendwo onclick="goToLager()" benutzt wird)
+if (typeof window !== 'undefined') {
+  window.goToLager = goToLager;
+}
+
+async function starteDoppelQuiz() {
+    const userId = localStorage.getItem("userId");
+    if (!userId) return;
+
+    const naechsteFragen = await getNextTwoQuestions(userId);
+    if (naechsteFragen.length > 0) await zeigeQuiz(naechsteFragen[0]);
+    if (naechsteFragen.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 700)); // Kurze Pause
+        await zeigeQuiz(naechsteFragen[1]);
+    }
+} 
+
+export function fromLagertoProberaum() {
+    currentRoom = "Gesteinsraum";
+    starteDoppelQuiz();
+
+    //Wegpunkte vom Lager ins Labor
+    const points = [
+        new THREE.Vector3(-12.5, 1.5, 4),  // Startpunkt (Lager)
+        new THREE.Vector3(-12.5, 1.5, 9),    // Zwischenpunkt
+        new THREE.Vector3(-2, 1.5, 9),    // Weitere Zwischenstation
+        new THREE.Vector3(-1, 1.5, -9),    // Weitere Zwischenstation
+        new THREE.Vector3(5, 1.5, -11),    // Weitere Zwischenstation
+        new THREE.Vector3(5, 1.5, -15)    // Zielpunkt (Proberaum)
+    ];
+
+    // Erstelle die Kurve
+    const curve = new THREE.CatmullRomCurve3(points);
+
+    // Anzahl der Segmente der Animation
+    const numPoints = 400;
+    const curvePoints = curve.getPoints(numPoints);
+    
+    // Animation über den Pfad
+    let index = 0;
+    function animateAlongPath() {
+        if (index < curvePoints.length - 1) {
+            const currentPoint = curvePoints[index];
+            const nextPoint = curvePoints[index + 1];
+
+            // Setze die Kamera-Position
+            camera.position.copy(currentPoint);
+            controls.target.copy(nextPoint); // Setze Zielpunkt auf nächsten Punkt
+            controls.update();
+
+            index++;
+            setTimeout(() => requestAnimationFrame(animateAlongPath), 30); // Verzögerung zwischen Frames
+            leaveproberaumMarker.visible = false;
+            proberaumlagerMarker.visible = false;
+        } else {
+            // Animation beendet
+            leaveproberaumMarker.visible = true;
+            proberaumlagerMarker.visible = true;
+        }
+    }   
+
+    // Start der Animation
+    animateAlongPath();
+
+    // Schieberegler einblenden (optional)
+    document.getElementById('uiContainer').style.display = 'none';
+
+    leaveMarshall.visible = false;
+    leaveMischraum.visible = false;
+    lagerproberaumMarker.visible = false;
+
+    const event = new CustomEvent('roomChanged', { detail: 'Gesteinsraum' });
+    window.dispatchEvent(event);
+}
+
+export function fromProberaumtoLager() {
+    currentRoom = "Lager";
+    //Wegpunkte vom Gesteinsraum ins Lager
+    const points = [
+        new THREE.Vector3(5, 1.5, -15),    // Zielpunkt (Proberaum)
+        new THREE.Vector3(5, 1.5, -11),    // Weitere Zwischenstation
+        new THREE.Vector3(-1, 1.5, -9),    // Weitere Zwischenstation
+        new THREE.Vector3(-2, 1.5, 9),    // Weitere Zwischenstation
+        new THREE.Vector3(-12.5, 1.5, 9),    // Zwischenpunkt
+        new THREE.Vector3(-12.5, 1.5, 4),  // Startpunkt (Lager)
+    ];
+
+    // Erstelle die Kurve
+    const curve = new THREE.CatmullRomCurve3(points);
+
+    // Anzahl der Segmente der Animation
+    const numPoints = 400;
+    const curvePoints = curve.getPoints(numPoints);
+    
+    // Animation über den Pfad
+    let index = 0;
+    function animateAlongPath() {
+        if (index < curvePoints.length - 1) {
+            const currentPoint = curvePoints[index];
+            const nextPoint = curvePoints[index + 1];
+
+            // Setze die Kamera-Position
+            camera.position.copy(currentPoint);
+            controls.target.copy(nextPoint); // Setze Zielpunkt auf nächsten Punkt
+            controls.update();
+
+            index++;
+            setTimeout(() => requestAnimationFrame(animateAlongPath), 30); // Verzögerung zwischen Frames
+            leaveproberaumMarker.visible = false;
+            proberaumlagerMarker.visible = false;
+        } else {
+            // Animation beendet
+            leaveproberaumMarker.visible = true;
+            lagerproberaumMarker.visible = true;
+        }
+    }   
+
+    // Start der Animation
+    animateAlongPath();
+
+    // Schieberegler einblenden (optional)
+    document.getElementBy
+    Id('uiContainer').style.display = 'none';
+
+    leaveMarshall.visible = false;
+    leaveMischraum.visible = false;
+}
+
+export function goToMischraum() {
+    currentRoom = 'Mischraum';
+    starteDoppelQuiz();
+    //Wegpunkte vom Gesteinsraum ins Lager
+    const points = [
+        new THREE.Vector3(5, 1.5, -15),    // Startpunkt
+        new THREE.Vector3(5, 1.5, -11),    // Weitere Zwischenstation
+        new THREE.Vector3(-1, 1.5, -9),    // Weitere Zwischenstation
+        new THREE.Vector3(-2, 1.5, 6),    // Weitere Zwischenstation
+        new THREE.Vector3(-8, 1.5, 7),    // Endpunkt
+    ];
+
+    // Erstelle die Kurve
+    const curve = new THREE.CatmullRomCurve3(points);
+
+    // Anzahl der Segmente der Animation
+    const numPoints = 400;
+    const curvePoints = curve.getPoints(numPoints);
+
+    // Animation über den Pfad
+    let index = 0;
+    function animateAlongPath() {
+        if (index < curvePoints.length - 1) {
+            const currentPoint = curvePoints[index];
+            const nextPoint = curvePoints[index + 1];
+
+            // Setze die Kamera-Position
+            camera.position.copy(currentPoint);
+            controls.target.copy(nextPoint); // Setze Zielpunkt auf nächsten Punkt
+            controls.update();
+
+            index++;
+            setTimeout(() => requestAnimationFrame(animateAlongPath), 30); // Verzögerung zwischen Frames
+            leaveproberaumMarker.visible = false;
+            proberaumlagerMarker.visible = false;
+        } else {
+            // Animation beendet
+            leaveproberaumMarker.visible = true;
+            
+            const targetPosition = new THREE.Vector3(-8, 1.5, 7); // Neue Zielposition
+            const targetLookAt = new THREE.Vector3(-8.5, 1.5, 6); // Zielblickpunkt im Mischraum
+        
+            // Kamera animiert bewegen
+            animateCamera(targetPosition, targetLookAt);
+        
+            // Optional: Kontrollziele direkt setzen
+            controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+            controls.update();
+            controls.enableZoom = false;
+            controls.enablePan = false;
+            controls.enableRotate = true;
+            leaveMischraum.visible = true;
+            document.getElementById('bitumenUI').style.display = 'block';
+        }
+    }   
+
+    leaveMarshall.visible = false;
+    // Start der Animation
+    animateAlongPath();
+
+    // Schieberegler einblenden (optional)
+    document.getElementById('uiContainer').style.display = 'none';
+
+    // Blende den `bitumenUI`-Schieberegler ein
+    // document.getElementById('bitumenUI').style.display = 'block';
+    const event = new CustomEvent('roomChanged', { detail: 'Mischraum' });
+    window.dispatchEvent(event);
+}
+
+export function leaveView() {
+    // Zielposition und LookAt-Werte definieren
+    const targetPosition = new THREE.Vector3(20, 20, 20);
+    const targetLookAt = new THREE.Vector3(0, 0, 0);
+
+    flyTo(targetPosition, targetLookAt, 1200);
+
+    // Setze den Drehpunkt (target) auf die gewünschte Position
+    controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+    controls.update();
+
+    camera.position.set(20, 20, 20);  // Beispielposition für die freie Ansicht
+    camera.lookAt(0, 0, 0);
+    
+    // Kamera-Steuerung komplett freigeben (Zoom und Rotation)
+    controls.enableZoom = true;
+    controls.enablePan = true;
+    controls.enabled = true;
+
+    // "Verlasse Ansicht"-Button ausblenden
+    document.getElementById('leaveView').style.display = 'none';
+    document.getElementById('toProberaum').style.display = 'none';
+    document.getElementById('toLager').style.display = 'none';  // Button ausblenden   
+
+    // Blende den `uiContainer`-Schieberegler aus
+    document.getElementById('uiContainer').style.display = 'none';
+
+    // Blende den `bitumenUI`-Schieberegler aus
+    document.getElementById('bitumenUI').style.display = 'none';
+
+    // if (isMobileDevice()) {
+    //     exitARView();
+    // }
+
+    leaveMarshall.visible = false;
+    leaveMischraum.visible = false;
+}
+
+if (typeof window !== 'undefined') {
+  window.leaveView = leaveView;
+}
+
+export async  function toMarshall() {
+    const userId = localStorage.getItem("userId");
+    if (!userId) return;
+    const naechsteFragen = await getNextQuestions(userId);
+    zeigeQuiz(naechsteFragen[0]);
+    // Wegpunkte vom Gesteinsraum ins Lager
+    const points = [
+        new THREE.Vector3(-8, 1.5, 7),    // Startpunkt
+        new THREE.Vector3(-2, 1.5, 6),    // Weitere Zwischenstation
+        new THREE.Vector3(-2, 1.5, 3),    // Weitere Zwischenstation
+        new THREE.Vector3(MarshallViewpoint.x, MarshallViewpoint.y, MarshallViewpoint.z)    // Endpunkt
+    ];
+
+    // Erstelle die Kurve
+    const curve = new THREE.CatmullRomCurve3(points);
+
+    // Anzahl der Segmente der Animation
+    const numPoints = 300;
+    const curvePoints = curve.getPoints(numPoints);
+
+    let index = 0;
+
+    function animateAlongPath() {
+        if (index < curvePoints.length - 1) {
+            const currentPoint = curvePoints[index];
+            const nextPoint = curvePoints[index + 1];
+
+            // Setze die Kamera-Position
+            camera.position.copy(currentPoint);
+            controls.target.copy(nextPoint);
+            controls.update();
+
+            index++;
+            setTimeout(() => requestAnimationFrame(animateAlongPath), 30);
+        } else {
+            leaveMarshall.visible = true;
+            // Animation beendet
+            leaveproberaumMarker.visible = true;
+            
+            const targetPosition = new THREE.Vector3(MarshallViewpoint.x, MarshallViewpoint.y, MarshallViewpoint.z); // Neue Zielposition
+            const targetLookAt = new THREE.Vector3(-7.5, 1.5, 1); // Zielblickpunkt im Mischraum
+        
+            // Kamera animiert bewegen
+            animateCamera(targetPosition, targetLookAt);
+            // Optional: Kontrollziele direkt setzen
+            controls.target.set(targetPosition.x, targetPosition.y, targetPosition.z);
+            controls.update();
+
+            // Erlaube nur Rotation, kein Zoom
+            controls.enableZoom = false;
+            controls.enablePan = false;
+            controls.enableRotate = true;
+        }
+    }
+    leaveMischraum.visible = false;
+    
+    // Start der Bewegung entlang des Pfades
+    animateAlongPath();
+
+    // UI-Elemente ausblenden
+    document.getElementById('uiContainer').style.display = 'none';
+    document.getElementById('bitumenUI').style.display = 'none';
+    const event = new CustomEvent('roomChanged', { detail: 'Marshall' });
+    window.dispatchEvent(event);
+}
+
+
+// Frame-Rate-Messung und Qualitätsanpassung
+let frameTimes = [];
+let qualityLevel = 3;
+
+function measureFrameRate() {
+    const now = performance.now();
+    frameTimes.push(now);
+
+    if (frameTimes.length > 60) {
+        frameTimes.shift();
+    }
+
+    if (frameTimes.length >= 2) {
+        const avgDeltaTime = (frameTimes[frameTimes.length - 1] - frameTimes[0]) / (frameTimes.length - 1);
+        const fps = 1000 / avgDeltaTime;
+
+        // Dynamische Anpassung
+        if (fps < 30 && qualityLevel > 1) {
+            qualityLevel--;
+            updateQuality(qualityLevel);
+        } else if (fps > 50 && qualityLevel < 3) {
+            qualityLevel++;
+            updateQuality(qualityLevel);
+        }
+    }
+    requestAnimationFrame(measureFrameRate);
+}
+
+function updateQuality(level) {
+    switch (level) {
+        case 1:
+            renderer.setPixelRatio(0.5);
+            renderer.antialias = false;
+            dirLight1.shadow.mapSize.set(256, 256); // Geringere Schattenauflösung
+            break;
+        case 2:
+            renderer.setPixelRatio(1);
+            renderer.antialias = true;
+            dirLight1.shadow.mapSize.set(512, 512);
+            break;
+        case 3:
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.antialias = true;
+            dirLight1.shadow.mapSize.set(1024, 1024);
+            break;
+    }
+    dirLight1.shadow.needsUpdate = true; // Aktualisiere Schatten
+}
+
+window.addEventListener('resize', onWindowResize);
+
+function onWindowResize() {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    // Kamera-Aspektverhältnis aktualisieren
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+
+    // Renderer-Größe anpassen
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(window.devicePixelRatio);
+}
+
+// Initiale Anpassung beim Start
+onWindowResize();
+measureFrameRate();
+
+function jumpToLager() {
+    currentRoom = "Lager";
+    // Zielposition und LookAt-Werte definieren
+    const targetPosition = new THREE.Vector3(lagerViewpoint.x, lagerViewpoint.y, lagerViewpoint.z);
+    const targetLookAt = new THREE.Vector3(lagerViewpoint.x, lagerViewpoint.y, lagerViewpoint.z + 0.1);
+
+    camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z)
+    camera.lookAt(targetLookAt.x, targetLookAt.y, targetLookAt.z)
+    // Setze den Drehpunkt (target) auf die gewünschte Position
+    controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+    controls.update();
+
+    // Erlaube nur Rotation, kein Zoom
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.enableRotate = true;
+    // if (isMobileDevice()) {
+    //     exitARView();
+    // }
+    // Blende den `uiContainer`-Schieberegler aus
+    document.getElementById('uiContainer').style.display = 'none';
+    leaveMischraum.visible = false;
+    leaveMarshall.visible = false;
+
+    const event = new CustomEvent('roomChanged', { detail: 'Lager' });
+    window.dispatchEvent(event);
+}
+
+
+function jumpToGesteinsraum() {
+    currentRoom = "Gesteinsraum";
+    // Zielposition und LookAt-Werte definieren
+    const targetPosition = new THREE.Vector3(5, 1.5, -15);
+    const targetLookAt = new THREE.Vector3(5, 1.5, -15.1);
+
+    camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z)
+    camera.lookAt(targetLookAt.x, targetLookAt.y, targetLookAt.z)
+    // Setze den Drehpunkt (target) auf die gewünschte Position
+    controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+    controls.update();
+
+    // Erlaube nur Rotation, kein Zoom
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.enableRotate = true;
+    // if (isMobileDevice()) {
+    //     exitARView();
+    // }
+    // Blende den `uiContainer`-Schieberegler aus
+    document.getElementById('uiContainer').style.display = 'none';
+    leaveproberaumMarker.visible = true;
+    proberaumlagerMarker.visible = true;
+    
+
+    const event = new CustomEvent('roomChanged', { detail: 'Gesteinsraum' });
+    window.dispatchEvent(event);
+}
+
+function jumpToMischraum() {
+    currentRoom = "Gesteinsraum";
+    // Zielposition und LookAt-Werte definieren
+    const targetPosition = new THREE.Vector3(-8, 1.5, 7); // Neue Zielposition
+    const targetLookAt = new THREE.Vector3(-8.5, 1.5, 6); // Zielblickpunkt im Mischraum
+
+    camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z)
+    camera.lookAt(targetLookAt.x, targetLookAt.y, targetLookAt.z)
+    // Setze den Drehpunkt (target) auf die gewünschte Position
+    controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+    controls.update();
+
+    // Erlaube nur Rotation, kein Zoom
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.enableRotate = true;
+
+    // Blende den `uiContainer`-Schieberegler aus
+    leaveMischraum.visible = true;
+    document.getElementById('bitumenUI').style.display = 'block';
+    leaveMarshall.visible = false;
+
+    // Schieberegler einblenden (optional)
+    document.getElementById('uiContainer').style.display = 'none';
+
+    const event = new CustomEvent('roomChanged', { detail: 'Mischraum' });
+    window.dispatchEvent(event);
+}
+
+// OrbitControls fine-tuning
+if (LOW_END) {
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.15;
+  controls.rotateSpeed = 0.6;
+}
+
+applyToAllMeshes((obj, materials) => {
+  for (const m of materials) {
+    if (!m) continue;
+    // Beispiel: was vorher bei "mesh.material" stand, jetzt pro Material:
+    // m.toneMapped = !LOW_END;
+    // m.transparent = true;        // falls du sowas machst
+    // m.needsUpdate = true;        // bei Material-Flags oft sinnvoll
+  }
+});
+
+// Partikeleffekte / Reflections / HDR:
+if (LOW_END) {
+  // keinen HDR-Hintergrund laden, keine Reflections, kleinere Texturen
+}
+
+window.addEventListener("keydown", function(event) {
+    if (event.key === "l" || event.key === "L") {
+        jumpToLager();
+    }
+    if (event.key === "g" || event.key === "G") {
+        jumpToGesteinsraum(); // ebenfalls definieren
+    }
+    if (event.key === "m" || event.key === "M") {
+        jumpToMischraum(); // ebenfalls definieren
+    }
+});
+
+export { jumpToGesteinsraum, jumpToMischraum }
