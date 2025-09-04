@@ -29,21 +29,11 @@ window.handleLogin = async function handleLogin() {
     const json = await resp.json();
     if (!resp.ok || !json.ok) {
       alert(json.message || 'Login fehlgeschlagen');
+      setLoginStatus(false);
       return;
     }
 
-    const success = await checkCredentials(userId, password);
-
-    if (success) {
-        setLoginStatus(true);
-        localStorage.setItem("userId", userId);
-
-        document.getElementById("userIdContainer").style.display = "none";
-        document.getElementById("AnleitungContainer").style.display = "block"; 
-    } else {
-        setLoginStatus(false);
-        alert("Login fehlgeschlagen! Zugang nicht möglich.");
-    }
+    setLoginStatus(true);
 
     // Erfolg → deine alte Logik weiterverwenden
     window.setUserId(json.matrikelnummer);
@@ -57,6 +47,7 @@ window.handleLogin = async function handleLogin() {
   } catch (e) {
     console.error('[handleLogin] error', e);
     alert('Netzwerk-/Serverfehler beim Login');
+    setLoginStatus(false);
   }
 };
 
