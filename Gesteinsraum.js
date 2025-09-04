@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import {scene} from "./Allgemeines.js"
+import {scene, setLoginStatus} from "./Allgemeines.js"
 import { getVisibleIntersects } from "./main.js";
 import {schildchenProberaum} from "./Lager.js";
 import {goToMischraum, currentRoom } from "./View_functions.js";
@@ -472,6 +472,7 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener(inputEvent, function(event) {
     if (isDragging) return; // Verhindere Raumwechsel bei Drag
     if (!toMischraumMarker.visible) return;
+    if (!setLoginStatus) return;
     const mouse = new THREE.Vector2();
     if (inputEvent === 'touchstart') {
         const touch = event.touches[0];
