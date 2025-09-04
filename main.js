@@ -1,6 +1,6 @@
 import { fromLagertoProberaum, goToLager, goToMischraum, toMarshall, jumpToGesteinsraum, jumpToMischraum } from './View_functions.js';
 import * as THREE from 'three';
-import { camera, scene } from './Allgemeines.js';
+import { camera, scene, setLoginStatus } from './Allgemeines.js';
 
 const BACKEND_URL = "https://backend-test-phase.vercel.app";
 export let mouse = new THREE.Vector2();
@@ -30,6 +30,19 @@ window.handleLogin = async function handleLogin() {
     if (!resp.ok || !json.ok) {
       alert(json.message || 'Login fehlgeschlagen');
       return;
+    }
+
+    const success = await checkCredentials(userId, password);
+
+    if (success) {
+        setLoginStatus(true);
+        localStorage.setItem("userId", userId);
+
+        document.getElementById("userIdContainer").style.display = "none";
+        document.getElementById("AnleitungContainer").style.display = "block"; 
+    } else {
+        setLoginStatus(false);
+        alert("Login fehlgeschlagen! Zugang nicht möglich.");
     }
 
     // Erfolg → deine alte Logik weiterverwenden

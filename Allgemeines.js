@@ -6,6 +6,11 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import {TWEEN} from 'https://unpkg.com/three@0.139.0/examples/jsm/libs/tween.module.min.js';
 
+export let isLoggedIn = false;
+export function setLoginStatus(status) {
+    isLoggedIn = status;
+}
+
 // === Low-End GPU Detection & Quality Profiles ===
 function detectLowEndGPU() {
   try {

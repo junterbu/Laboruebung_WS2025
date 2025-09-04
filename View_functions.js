@@ -5,7 +5,7 @@ import { lagerMarker, leaveproberaumMarker, proberaumlagerMarker, lagerproberaum
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { zeigeQuiz, speicherePunkte, quizFragen, quizPunkte } from "./Marker.js";
 import { getUserQuizFragen, getNextTwoQuestions, getNextQuestions, getVisibleIntersects } from "./main.js";
-import { isMobileDevice, dirLight1, scene, camera, renderer, composer, LOW_END, TARGET_FPS, QUALITY } from './Allgemeines.js';
+import { isMobileDevice, dirLight1, scene, camera, renderer, composer, LOW_END, TARGET_FPS, QUALITY, isLoggedIn } from './Allgemeines.js';
 
 function applyToAllMeshes(callback) {
   scene.traverse((obj) => {
@@ -123,6 +123,7 @@ window.addEventListener(inputEvent, function (event) {
 
 function handleMarkerClick(marker) {
     if (!marker.visible) return;
+    if (!isLoggedIn) return;
     if (marker === lagerMarker) {
         goToLager();
     } else if (marker === proberaumlagerMarker && currentRoom == "Gesteinsraum") {
