@@ -42,7 +42,7 @@ window.handleLogin = async function handleLogin() {
     const box = document.getElementById('userIdContainer');
     if (box) {
       box.classList.add('fade-out');
-      setTimeout(() => (box.style.display = 'none'), 300);
+      setTimeout(() => (box.style.display = 'none'), 100);
     }
   } catch (e) {
     console.error('[handleLogin] error', e);
